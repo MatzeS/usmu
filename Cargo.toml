@@ -1,0 +1,27 @@
+[package]
+name = "usmu"
+version = "0.1.0"
+edition = "2024"
+
+description = "Library for controlling the *μSMU* small source-measure unit."
+repository = "https://github.com/MatzeS/usmu"
+license = "MIT OR Apache-2.0"
+
+keywords = ["usmu", "smu", "source-measure-unit"]
+categories = []
+
+[dependencies]
+thiserror = "2.0.12"
+anyhow = "1.0.99"
+scpi-client = { version = "0.1.1" }
+serialport = "4.7.2"
+clap = { version = "4.5.43", features = ["derive"] }
+ndarray = { version = "0.16.1" }
+uom = "0.37.0"
+csv = "1.3.1"
+serde = { version = "1.0.219", features = ["derive"] }
+
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false
+features = ["user-hooks"]
