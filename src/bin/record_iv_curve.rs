@@ -108,8 +108,9 @@ fn run() -> Result<()> {
 
     let mut smu = MicroSmu::open(port)?;
 
-    smu.enable()?;
+    smu.set_voltage(args.voltage_start)?;
     smu.set_current_limit(args.current_limit)?;
+    smu.enable()?;
     smu.set_over_sample_rate(args.over_sampling)?;
 
     let mut samples = Vec::with_capacity(args.voltage_steps);
