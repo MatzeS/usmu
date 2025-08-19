@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::ExitCode, thread::sleep, time::Duration};
+use std::{io::Write, path::PathBuf, process::ExitCode, thread::sleep, time::Duration};
 
 use anyhow::anyhow;
 use clap::{Parser, ValueEnum};
@@ -16,23 +16,31 @@ enum OutputFormat {
 
 #[derive(Debug, Parser)]
 struct CommandlineArguments {
+    #[command(flatten)]
+    connection_parameter: SmuConnectionParameter,
+
+    #[command(flatten)]
+    recording_parameter: IvCurveRecordingParameters,
+
+    #[command(flatten)]
+    output_parameter: OutputParameter,
+}
+
+#[derive(Debug, Clone, Parser)]
+struct SmuConnectionParameter {
     #[arg(long)]
     port: Option<PathBuf>,
-
-    #[arg(long, short = 'o')]
-    output: Option<PathBuf>,
-
-    #[arg(long, short = 'f', default_value = "csv")]
-    format: OutputFormat,
-
     #[arg(long)]
     serial_number: Option<String>,
+}
 
+#[derive(Debug, Clone, Parser)]
+struct IvCurveRecordingParameters {
     #[arg(long, short = 's', default_value = "-1 V")]
-    voltage_start: Voltage,
+    start_voltage: Voltage,
 
     #[arg(long, short = 'e', default_value = "1 V")]
-    voltage_end: Voltage,
+    end_voltage: Voltage,
 
     #[arg(long, short = 'n', default_value_t = 50)]
     voltage_steps: usize,
@@ -49,8 +57,18 @@ struct CommandlineArguments {
     delay: Time,
 }
 
+#[derive(Debug, Clone, Parser)]
+struct OutputParameter {
+    #[arg(long, short = 'o')]
+    output: Option<PathBuf>,
+
+    #[arg(long, short = 'f', default_value = "csv")]
+    format: OutputFormat,
+}
+
 fn main() -> ExitCode {
-    match run() {
+    let result = CommandlineArguments::parse().run();
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e}");
@@ -59,86 +77,66 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<()> {
-    let args = CommandlineArguments::parse();
+impl CommandlineArguments {
+    fn run(&self) -> Result<()> {
+        let mut smu = self.connection_parameter.connect()?;
+        let samples = self.recording_parameter.record(&mut smu)?;
+        self.output_parameter.output(samples)?;
 
-    let ports = find_serial_ports()?;
-
-    let mut ports = ports
-        .into_iter()
-        .map(|port| {
-            let serial = MicroSmu::open(port.clone())
-                .ok()
-                .and_then(|mut e| e.get_identity().ok())
-                .map(|e| format!("{e}"))
-                .unwrap_or("<failed to read>".to_string());
-
-            (port, serial)
-        })
-        .collect::<Vec<_>>();
-
-    if ports.is_empty() {
-        Err(anyhow!(
-            "Could not find uSMU. No matching serial port identified."
-        ))?;
+        Ok(())
     }
-
-    if ports.len() > 1 && args.port.is_none() && args.serial_number.is_none() {
-        eprintln!("Available devices:");
-        for (port, serial) in ports.iter() {
-            eprintln!("{} - {}", port.port_name, serial);
-        }
-
-        Err(anyhow!(
-            "Multiple uSMUs are attached, but neitherr port nor serial number are defined. Specify at least one to disambiguate the device."
-        ))?;
-    }
-
-    if let Some(port) = args.port {
-        ports.retain(|(e, _)| {
-            e.port_name == port.to_str().expect("path to string conversion failed")
-        });
-    }
-    if let Some(serial_number) = args.serial_number {
-        ports.retain(|(_, e)| e == serial_number.as_str());
-    }
-
-    assert_eq!(ports.len(), 1);
-    let (port, _) = ports.into_iter().next().unwrap();
-
-    let mut smu = MicroSmu::open(port)?;
-
-    let output: Box<dyn std::io::Write> = if let Some(output) = args.output {
-        let file = std::fs::File::create(output)?;
-        Box::new(file)
-    } else {
-        Box::new(std::io::stdout())
-    };
-
-    let parameter = IvCurveRecordingParameters {
-        start_voltage: args.voltage_start,
-        end_voltage: args.voltage_end,
-        steps: args.voltage_steps,
-        current_limit: args.current_limit,
-        over_sampling: args.over_sampling,
-        delay: args.delay,
-    };
-
-    let samples = parameter.record(&mut smu)?;
-
-    assert_eq!(args.format, OutputFormat::Csv);
-    write_output_csv(samples, output)?;
-
-    Ok(())
 }
 
-struct IvCurveRecordingParameters {
-    start_voltage: Voltage,
-    end_voltage: Voltage,
-    steps: usize,
-    current_limit: Current,
-    over_sampling: u16,
-    delay: Time,
+impl SmuConnectionParameter {
+    fn connect(&self) -> Result<MicroSmu> {
+        let ports = find_serial_ports()?;
+
+        let mut ports = ports
+            .into_iter()
+            .map(|port| {
+                let serial = MicroSmu::open(port.clone())
+                    .ok()
+                    .and_then(|mut e| e.get_identity().ok())
+                    .map(|e| format!("{e}"))
+                    .unwrap_or("<failed to read>".to_string());
+
+                (port, serial)
+            })
+            .collect::<Vec<_>>();
+
+        if ports.is_empty() {
+            Err(anyhow!(
+                "Could not find uSMU. No matching serial port identified."
+            ))?;
+        }
+
+        if ports.len() > 1 && self.port.is_none() && self.serial_number.is_none() {
+            eprintln!("Available devices:");
+            for (port, serial) in ports.iter() {
+                eprintln!("{} - {}", port.port_name, serial);
+            }
+
+            Err(anyhow!(
+                "Multiple uSMUs are attached, but neitherr port nor serial number are defined. Specify at least one to disambiguate the device."
+            ))?;
+        }
+
+        if let Some(port) = self.port.as_ref() {
+            ports.retain(|(e, _)| {
+                e.port_name == port.to_str().expect("path to string conversion failed")
+            });
+        }
+        if let Some(serial_number) = self.serial_number.as_ref() {
+            ports.retain(|(_, e)| e == serial_number.as_str());
+        }
+
+        assert_eq!(ports.len(), 1);
+        let (port, _) = ports.into_iter().next().unwrap();
+
+        let smu = MicroSmu::open(port)?;
+
+        Ok(smu)
+    }
 }
 
 impl IvCurveRecordingParameters {
@@ -148,12 +146,12 @@ impl IvCurveRecordingParameters {
         smu.enable()?;
         smu.set_over_sample_rate(self.over_sampling)?;
 
-        let mut samples = Vec::with_capacity(self.steps);
+        let mut samples = Vec::with_capacity(self.voltage_steps);
 
         for set_voltage in linspace(
             self.start_voltage.get::<volt>(),
             self.end_voltage.get::<volt>(),
-            self.steps,
+            self.voltage_steps,
         ) {
             // unfortunately, we need to unpack and repack the voltage here to use the linspace iterator :'(
             let set_voltage = Voltage::new::<volt>(set_voltage);
@@ -169,26 +167,41 @@ impl IvCurveRecordingParameters {
     }
 }
 
-fn write_output_csv(
-    samples: Vec<(Voltage, Current)>,
-    output: Box<dyn std::io::Write>,
-) -> Result<()> {
-    #[derive(Serialize)]
-    struct Sample {
-        voltage: f32,
-        current: f32,
+impl OutputParameter {
+    fn output(&self, samples: Vec<(Voltage, Current)>) -> Result<()> {
+        match self.format {
+            OutputFormat::Csv => self.write_csv(samples),
+        }
     }
 
-    let mut writer = csv::WriterBuilder::new().from_writer(output);
-    for (v, i) in samples {
-        writer
-            .serialize(Sample {
-                voltage: v.get::<volt>(),
-                current: i.get::<ampere>(),
-            })
-            .map_err(|e| anyhow::anyhow!(e))?;
+    fn output_writer(&self) -> Result<Box<dyn Write>> {
+        if let Some(output) = self.output.as_ref() {
+            let file = std::fs::File::create(output)?;
+            Ok(Box::new(file))
+        } else {
+            Ok(Box::new(std::io::stdout()))
+        }
     }
-    writer.flush()?;
 
-    Ok(())
+    fn write_csv(&self, samples: Vec<(Voltage, Current)>) -> Result<()> {
+        #[derive(Serialize)]
+        struct Sample {
+            voltage: f32,
+            current: f32,
+        }
+
+        let output = self.output_writer()?;
+        let mut writer = csv::WriterBuilder::new().from_writer(output);
+        for (v, i) in samples {
+            writer
+                .serialize(Sample {
+                    voltage: v.get::<volt>(),
+                    current: i.get::<ampere>(),
+                })
+                .map_err(|e| anyhow::anyhow!(e))?;
+        }
+        writer.flush()?;
+
+        Ok(())
+    }
 }
