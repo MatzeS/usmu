@@ -108,42 +108,74 @@ fn run() -> Result<()> {
 
     let mut smu = MicroSmu::open(port)?;
 
-    smu.set_voltage(args.voltage_start)?;
-    smu.set_current_limit(args.current_limit)?;
-    smu.enable()?;
-    smu.set_over_sample_rate(args.over_sampling)?;
-
-    let mut samples = Vec::with_capacity(args.voltage_steps);
-
-    for set_voltage in linspace(
-        args.voltage_start.get::<volt>(),
-        args.voltage_end.get::<volt>(),
-        args.voltage_steps,
-    ) {
-        // unfortunately, we need to unpack and repack the voltage here to use the linspace iterator :'(
-        let set_voltage = Voltage::new::<volt>(set_voltage);
-        smu.set_voltage(set_voltage)?;
-        sleep(Duration::from_secs_f32(args.delay.get::<second>()));
-        let MeasureResponse { voltage, current } = smu.measure(set_voltage)?;
-        samples.push((voltage, current));
-    }
-
-    smu.disable()?;
-
-    let out: Box<dyn std::io::Write> = if let Some(output) = args.output {
+    let output: Box<dyn std::io::Write> = if let Some(output) = args.output {
         let file = std::fs::File::create(output)?;
         Box::new(file)
     } else {
         Box::new(std::io::stdout())
     };
 
+    let samples = record_iv_curve(
+        &mut smu,
+        args.voltage_start,
+        args.voltage_end,
+        args.voltage_steps,
+        args.current_limit,
+        args.over_sampling,
+        args.delay,
+    )?;
+
+    assert_eq!(args.format, OutputFormat::Csv);
+    write_output_csv(samples, output)?;
+
+    Ok(())
+}
+
+fn record_iv_curve(
+    smu: &mut MicroSmu,
+    start_voltage: Voltage,
+    end_voltage: Voltage,
+    steps: usize,
+    current_limit: Current,
+    over_sampling: u16,
+    delay: Time,
+) -> Result<Vec<(Voltage, Current)>> {
+    smu.set_voltage(start_voltage)?;
+    smu.set_current_limit(current_limit)?;
+    smu.enable()?;
+    smu.set_over_sample_rate(over_sampling)?;
+
+    let mut samples = Vec::with_capacity(steps);
+
+    for set_voltage in linspace(
+        start_voltage.get::<volt>(),
+        end_voltage.get::<volt>(),
+        steps,
+    ) {
+        // unfortunately, we need to unpack and repack the voltage here to use the linspace iterator :'(
+        let set_voltage = Voltage::new::<volt>(set_voltage);
+        smu.set_voltage(set_voltage)?;
+        sleep(Duration::from_secs_f32(delay.get::<second>()));
+        let MeasureResponse { voltage, current } = smu.measure(set_voltage)?;
+        samples.push((voltage, current));
+    }
+
+    smu.disable()?;
+
+    Ok(samples)
+}
+
+fn write_output_csv(
+    samples: Vec<(Voltage, Current)>,
+    output: Box<dyn std::io::Write>,
+) -> Result<()> {
     #[derive(Serialize)]
     struct Sample {
         voltage: f32,
         current: f32,
     }
-    let mut writer = csv::WriterBuilder::new().from_writer(out);
-    assert_eq!(args.format, OutputFormat::Csv);
+
+    let mut writer = csv::WriterBuilder::new().from_writer(output);
     for (v, i) in samples {
         writer
             .serialize(Sample {
