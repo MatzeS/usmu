@@ -26,6 +26,7 @@ pub use uom::si::electric_current::{ampere, milliampere};
 pub use uom::si::electric_potential::{millivolt, volt};
 
 pub mod commands;
+pub mod record_iv_curve;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
