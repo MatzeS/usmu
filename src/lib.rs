@@ -21,9 +21,11 @@ use crate::commands::{
 
 pub type Current = uom::si::f32::ElectricCurrent;
 pub type Voltage = uom::si::f32::ElectricPotential;
+pub type Time = uom::si::f32::Time;
 
 pub use uom::si::electric_current::{ampere, milliampere};
 pub use uom::si::electric_potential::{millivolt, volt};
+pub use uom::si::time::{millisecond, second};
 
 pub mod commands;
 pub mod record_iv_curve;

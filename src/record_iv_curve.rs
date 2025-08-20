@@ -17,21 +17,21 @@ pub enum OutputFormat {
 #[derive(Debug, Parser)]
 pub struct CommandlineArguments {
     #[command(flatten)]
-    connection_parameter: SmuConnectionParameter,
+    pub connection_parameter: SmuConnectionParameter,
 
     #[command(flatten)]
-    recording_parameter: IvCurveRecordingParameters,
+    pub recording_parameter: IvCurveRecordingParameters,
 
     #[command(flatten)]
-    output_parameter: OutputParameter,
+    pub output_parameter: OutputParameter,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct SmuConnectionParameter {
     #[arg(long)]
-    port: Option<PathBuf>,
+    pub port: Option<PathBuf>,
     #[arg(long)]
-    serial_number: Option<String>,
+    pub serial_number: Option<u32>,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -116,7 +116,7 @@ impl SmuConnectionParameter {
             });
         }
         if let Some(serial_number) = self.serial_number.as_ref() {
-            ports.retain(|(_, e)| e == serial_number.as_str());
+            ports.retain(|(_, e)| e == serial_number.to_string().as_str());
         }
 
         assert_eq!(ports.len(), 1);
